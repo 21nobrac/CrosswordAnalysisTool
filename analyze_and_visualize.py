@@ -1,17 +1,12 @@
+from parse_crossword import load_grid_from_json
 from wordfreq import zipf_frequency
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import wordninja as wnj
 
-# Example grid from Feb 11, 2024 NYT mini
-# '.' means black square
-grid = [
-    list("..CBS"),
-    list("USHER"),
-    list("BAITS"),
-    list("EVES."),
-    list("REF..")
-]
+# Load the puzzle grid
+grid = load_grid_from_json("02.json")
 
 def get_across_words(grid):
     words = []
@@ -44,9 +39,33 @@ def get_down_words(grid):
     return words
 
 def get_word_rarity(word):
-    """Returns a rarity score: higher = rarer"""
-    freq = zipf_frequency(word.lower(), "en")
-    return round(7 - freq, 3)
+    """Returns a rarity score: higher = rarer (accounts for compound words)."""
+    word = word.lower()
+
+    # Frequency if treated as a single token
+    unsplitFreq = zipf_frequency(word, "en")
+
+    # Frequency if split into likely words
+    splitTokens = wnj.split(word)
+    if len(splitTokens) > 1:
+        splitFreq = np.mean([zipf_frequency(w, "en") for w in splitTokens])
+    else:
+        splitFreq = 0  # no split improvement possible
+
+    # Pick whichever frequency is higher (more common)
+    bestFreq = max(unsplitFreq, splitFreq)
+    used_split = bestFreq == splitFreq and len(splitTokens) > 1
+
+    # Convert frequency to "rarity" (higher = rarer)
+    rarity = round(7 - bestFreq, 3)
+
+    # Console output
+    if used_split:
+        print(f"'{word.upper()}' → split as {splitTokens}, using split average ({round(7 - bestFreq, 3)})")
+    else:
+        print(f"'{word.upper()}' → treated as single word ({round(7 - bestFreq, 3)})")
+
+    return rarity
 
 def analyze_crossword(grid):
     across = get_across_words(grid)
