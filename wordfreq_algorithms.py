@@ -1,6 +1,6 @@
 # wordfreq_algorithms.py
 from wordfreq import zipf_frequency
-from wikipedia_query import contains_article
+from wikipedia_query import contains_article, get_views
 import numpy as np
 import wordninja as wnj
 
@@ -80,7 +80,9 @@ def rarity_split_wikipedia(word: str, verbose=False) -> float:
       * If not, treated as slightly rarer (freq - wiki_weight).
     - Chooses whichever (unsplit vs split) gives the higher adjusted frequency.
     """
-    wiki_weight = 0.2
+    wiki_flat_weight = 0.15
+    wiki_view_weight = 0.00001
+    score_bloat_reduction = 0.5
     word = word.lower().strip()
 
     # --- Base frequencies ---
@@ -99,19 +101,21 @@ def rarity_split_wikipedia(word: str, verbose=False) -> float:
 
     # --- Apply Wikipedia weighting ---
     if has_unsplit_article:
-        unsplit_freq *= 1 + wiki_weight
-    else:
-        unsplit_freq *= 1 - wiki_weight
+        unsplit_views = get_views(word)
+        unsplit_freq += wiki_flat_weight
+        unsplit_freq += unsplit_views * wiki_view_weight
 
     if len(split_tokens) > 1:
         if has_split_article:
-            split_freq *= 1 + wiki_weight
-        else:
-            split_freq *= 1 - wiki_weight
+            split_views = get_views(split_phrase)
+            split_freq += wiki_flat_weight
+            split_freq += split_views * wiki_view_weight
 
     # --- Determine which path to use ---
     best_freq = max(unsplit_freq, split_freq)
     used_split = (best_freq == split_freq) and (len(split_tokens) > 1)
+
+    best_freq -= score_bloat_reduction
 
     rarity = round(7 - best_freq, 3)
 

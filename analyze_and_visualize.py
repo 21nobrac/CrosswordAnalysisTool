@@ -175,15 +175,17 @@ def analyze_crossword(grid):
     crosswordese_map[mask] = np.nan
 
     # Print summary
-    print("\nTop 3 most novel answers:")
-    for w in sorted(word_data, key=lambda x: -x["novelty"])[:3]:
+    print("\nTop 5 most novel answers:")
+    for w in sorted(word_data, key=lambda x: -x["novelty"])[:5]:
         print(f"  {w['word']}: {w['novelty']}")
 
-    hardest = max(word_data, key=lambda x: x["stretch"])
-    print(f"\nHardest (stretch): {hardest['word']} ({hardest['stretch']:.3f})")
+    print("\nTop 5 hardest answers:")
+    for w in sorted(word_data, key=lambda x: -x["stretch"])[:5]:
+        print(f"  {w['word']}: {w['stretch']}")
 
-    most_crosswordese = max(word_data, key=lambda x: x["crosswordese"])
-    print(f"Most crosswordese: {most_crosswordese['word']} ({most_crosswordese['crosswordese']:.3f})")
+    print("\nTop 5 most crosswordese answers:")
+    for w in sorted(word_data, key=lambda x: -x["crosswordese"])[:5]:
+        print(f"  {w['word']}: {w['crosswordese']}")
 
     # Ask if user wants to update frequency DB
     update_choice = input("\nUpdate NYT frequency database with this puzzle? (y/n): ").strip().lower()
