@@ -1,6 +1,7 @@
 from parse_crossword import load_grid_from_json
 from wordfreq import zipf_frequency
 from update_freq_db import update_freq_db
+from wordfreq_algorithms import ALGORITHMS
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -9,6 +10,10 @@ import csv
 import os
 
 FREQ_FILE = "nyt_answer_freqs_1976_2012.csv"
+
+# Select the algorithm by name
+algo_name = "split_avg"  # can be swapped for testing
+rarity_func = ALGORITHMS[algo_name]
 
 # -------------------------------
 # Frequency + novelty helpers
@@ -42,32 +47,6 @@ def compute_novelty(word, freq_db):
     min_count = min(freq_db.values())
     novelty = 1 - (count - min_count) / (max_count - min_count + 1e-6)
     return round(novelty, 3)
-
-# -------------------------------
-# Word rarity helper
-# -------------------------------
-
-def get_word_rarity(word):
-    """Returns a rarity score from English frequency (higher = rarer)."""
-    word = word.lower()
-
-    unsplitFreq = zipf_frequency(word, "en")
-    splitTokens = wnj.split(word)
-    if len(splitTokens) > 1:
-        splitFreq = np.mean([zipf_frequency(w, "en") for w in splitTokens])
-    else:
-        splitFreq = 0
-
-    bestFreq = max(unsplitFreq, splitFreq)
-    used_split = bestFreq == splitFreq and len(splitTokens) > 1
-    rarity = round(7 - bestFreq, 3)
-
-    if used_split:
-        print(f"'{word.upper()}' → split as {splitTokens}, using split average ({rarity})")
-    else:
-        print(f"'{word.upper()}' → treated as single word ({rarity})")
-
-    return rarity
 
 # -------------------------------
 # Grid parsing
@@ -119,7 +98,7 @@ def analyze_crossword(grid):
     mask = np.array([[ch == '.' for ch in row] for row in grid])
 
     for (r, c), direction, word in all_words:
-        rarity = get_word_rarity(word)
+        rarity = rarity_func(word)
         novelty = compute_novelty(word, freq_db)
         combined_score = np.mean([rarity, novelty * 7])  # normalize novelty to same scale
 
