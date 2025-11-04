@@ -9,11 +9,12 @@ import wordninja as wnj
 import csv
 import os
 
-FREQ_FILE = "nyt_answer_freqs_1976_2012.csv"
+FREQ_FILE = "nyt_answer_freqs.csv"
 
-# Select the algorithm by name
-algo_name = "split_avg"  # can be swapped for testing
+# Select algorithm by name
+algo_name = "split_avg"  # e.g., "split_avg", "single"
 rarity_func = ALGORITHMS[algo_name]
+
 
 # -------------------------------
 # Frequency + novelty helpers
@@ -28,25 +29,43 @@ def load_freq_db(path=FREQ_FILE):
         reader = csv.DictReader(f)
         return {row["answer"]: int(row["count"]) for row in reader}
 
+
 def compute_novelty(word, freq_db):
-    """
-    Compute a novelty score (0–1) for a crossword answer.
-      1.0 = totally new
-      0.0 = among the most common
-    """
+    """Compute a novelty score (0–1): 1.0 = totally new, 0.0 = most common."""
     word = word.upper()
     if not freq_db:
         return 1.0
-
     if word not in freq_db:
         return 1.0
 
-    # normalize based on rank among top counts
     count = freq_db[word]
     max_count = max(freq_db.values())
     min_count = min(freq_db.values())
     novelty = 1 - (count - min_count) / (max_count - min_count + 1e-6)
     return round(novelty, 3)
+
+
+def compute_crosswordese(word, freq_db):
+    """
+    Compute 'crosswordese' — how overrepresented a word is in crosswords vs English.
+    Formula: (crossword_freq / lang_freq)
+    Then log-scaled and normalized to roughly 0–7 range for display.
+    """
+    word = word.upper()
+    crossword_count = freq_db.get(word, 0)
+    total_crossword = sum(freq_db.values()) if freq_db else 1
+
+    crossword_freq = crossword_count / total_crossword
+    lang_freq = 10 ** (zipf_frequency(word.lower(), "en") - 6)  # convert Zipf to absolute freq
+
+    if lang_freq == 0:
+        return 7.0  # Extremely crosswordese (rare in language)
+    ratio = crossword_freq / lang_freq
+
+    # Log scale: positive = overrepresented
+    score = np.log10(ratio + 1e-12) + 6  # shift upward to avoid negatives
+    return round(score, 3)
+
 
 # -------------------------------
 # Grid parsing
@@ -66,6 +85,7 @@ def get_across_words(grid):
                 current = ""
     return words
 
+
 def get_down_words(grid):
     grid = np.array(grid)
     words = []
@@ -82,6 +102,7 @@ def get_down_words(grid):
                 current = ""
     return words
 
+
 # -------------------------------
 # Crossword analysis
 # -------------------------------
@@ -93,56 +114,83 @@ def analyze_crossword(grid):
     all_words = across + down
 
     h, w = len(grid), len(grid[0])
-    across_map = np.zeros((h, w))
-    down_map = np.zeros((h, w))
     mask = np.array([[ch == '.' for ch in row] for row in grid])
 
+    stretch_map = np.zeros((h, w)) * np.nan
+    novelty_map = np.zeros((h, w)) * np.nan
+    crosswordese_map = np.zeros((h, w)) * np.nan
+
+    word_data = []
+
     for (r, c), direction, word in all_words:
-        rarity = rarity_func(word)
+        stretch = rarity_func(word)
         novelty = compute_novelty(word, freq_db)
-        combined_score = np.mean([rarity, novelty * 7])  # normalize novelty to same scale
+        crosswordese = compute_crosswordese(word, freq_db)
 
-        print(f"→ '{word.upper()}': novelty {novelty}, combined {round(combined_score,3)}")
+        word_data.append({
+            "word": word.upper(),
+            "stretch": stretch,
+            "novelty": novelty,
+            "crosswordese": crosswordese
+        })
 
-        if direction == 'across':
-            for i in range(len(word)):
-                across_map[r, c + i] = combined_score
-        else:
-            for i in range(len(word)):
-                down_map[r + i, c] = combined_score
+        print(f"→ '{word.upper()}': stretch={stretch:.3f}, novelty={novelty:.3f}, crosswordese={crosswordese:.3f}")
 
-    combined = np.zeros((h, w))
-    for r in range(h):
-        for c in range(w):
-            vals = [v for v in [across_map[r, c], down_map[r, c]] if v > 0]
-            combined[r, c] = np.mean(vals) if vals else np.nan
+        target_map = {
+            "stretch": stretch_map,
+            "novelty": novelty_map,
+            "crosswordese": crosswordese_map
+        }
 
-    combined[mask] = np.nan
+        for i in range(len(word)):
+            rr, cc = (r, c + i) if direction == "across" else (r + i, c)
+            for key, m in target_map.items():
+                val = locals()[key]
+                if not np.isnan(m[rr, cc]):
+                    m[rr, cc] = np.mean([m[rr, cc], val])
+                else:
+                    m[rr, cc] = val
+
+    # Mask out black squares
+    stretch_map[mask] = np.nan
+    novelty_map[mask] = np.nan
+    crosswordese_map[mask] = np.nan
+
+    # Print summary
+    print("\nTop 3 most novel answers:")
+    for w in sorted(word_data, key=lambda x: -x["novelty"])[:3]:
+        print(f"  {w['word']}: {w['novelty']}")
+
+    hardest = max(word_data, key=lambda x: x["stretch"])
+    print(f"\nHardest (stretch): {hardest['word']} ({hardest['stretch']:.3f})")
+
+    most_crosswordese = max(word_data, key=lambda x: x["crosswordese"])
+    print(f"Most crosswordese: {most_crosswordese['word']} ({most_crosswordese['crosswordese']:.3f})")
 
     # Ask if user wants to update frequency DB
     update_choice = input("\nUpdate NYT frequency database with this puzzle? (y/n): ").strip().lower()
     if update_choice == "y":
-        update_freq_db([w for (_, _, w) in all_words])
+        update_freq_db([w["word"] for w in word_data])
 
-    return combined
+    return stretch_map, novelty_map, crosswordese_map
+
 
 # -------------------------------
 # Visualization
 # -------------------------------
 
-def plot_crossword_heatmap(grid, difficulty_map):
+def plot_crossword_heatmap(grid, data_map, title):
     plt.figure(figsize=(6, 6))
     ax = sns.heatmap(
-        difficulty_map,
-        cmap="magma_r",
+        data_map,
+        cmap="coolwarm",
         annot=False,
         fmt=".1f",
         square=True,
         linewidths=0.5,
-        cbar_kws={"label": "Novelty / Difficulty"},
+        cbar_kws={"label": title},
     )
-    plt.title("Crossword Novelty & Difficulty Heatmap")
-
+    plt.title(title)
     h, w = len(grid), len(grid[0])
     for r in range(h):
         for c in range(w):
@@ -150,16 +198,20 @@ def plot_crossword_heatmap(grid, difficulty_map):
             if letter != '.':
                 ax.text(
                     c + 0.5, r + 0.5, letter,
-                    color="grey", ha="center", va="center",
+                    color="black", ha="center", va="center",
                     fontsize=14, fontweight="bold"
                 )
     plt.show()
+
 
 # -------------------------------
 # Run the analyzer
 # -------------------------------
 
 if __name__ == "__main__":
-    grid = load_grid_from_json("02.json")
-    difficulty_map = analyze_crossword(grid)
-    plot_crossword_heatmap(grid, difficulty_map)
+    grid = load_grid_from_json("NYT_2025-11-03.json")
+    stretch_map, novelty_map, crosswordese_map = analyze_crossword(grid)
+
+    plot_crossword_heatmap(grid, stretch_map, "Stretch (Rarity / Difficulty)")
+    plot_crossword_heatmap(grid, novelty_map, "Novelty (NYT Uniqueness)")
+    plot_crossword_heatmap(grid, crosswordese_map, "Crosswordese (Overrepresentation)")
