@@ -2,7 +2,7 @@ import csv
 from collections import Counter
 import os
 
-FREQ_FILE = "nyt_answer_freqs_1976_2012.csv"
+FREQ_FILE = "nyt_answer_freqs.csv"
 
 def update_freq_db(all_words, freq_file=FREQ_FILE):
     """
