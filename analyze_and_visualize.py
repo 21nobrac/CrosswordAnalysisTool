@@ -8,11 +8,12 @@ import seaborn as sns
 import wordninja as wnj
 import csv
 import os
+import math
 
 FREQ_FILE = "nyt_answer_freqs.csv"
 
 # Select algorithm by name
-algo_name = "split_avg"  # e.g., "split_avg", "single"
+algo_name = "split_wiki"  # e.g., "split_avg", "single"
 rarity_func = ALGORITHMS[algo_name]
 
 
@@ -31,7 +32,7 @@ def load_freq_db(path=FREQ_FILE):
 
 
 def compute_novelty(word, freq_db):
-    """Compute a novelty score (0–1): 1.0 = totally new, 0.0 = most common."""
+    """Compute a novelty score (0-1): 1.0 = totally new, 0.0 = most common."""
     word = word.upper()
     if not freq_db:
         return 1.0
@@ -44,27 +45,44 @@ def compute_novelty(word, freq_db):
     novelty = 1 - (count - min_count) / (max_count - min_count + 1e-6)
     return round(novelty, 3)
 
-
-def compute_crosswordese(word, freq_db):
+def compute_novelty_log(word, freq_db, base=5, unseen_score=1.0, round_digits=3):
     """
-    Compute 'crosswordese' — how overrepresented a word is in crosswords vs English.
-    Formula: (crossword_freq / lang_freq)
-    Then log-scaled and normalized to roughly 0–7 range for display.
+    Novelty in [0,1] using a log scale. 1.0 = totally new, 0.0 = most common.
+    - base: log base (default 5)
+    - unseen_score: returned for words not in freq_db (default 1.0)
     """
     word = word.upper()
-    crossword_count = freq_db.get(word, 0)
-    total_crossword = sum(freq_db.values()) if freq_db else 1
 
-    crossword_freq = crossword_count / total_crossword
-    lang_freq = 10 ** (zipf_frequency(word.lower(), "en") - 6)  # convert Zipf to absolute freq
+    if not freq_db:
+        return float(round(unseen_score, round_digits))
+    if word not in freq_db:
+        return float(round(unseen_score, round_digits))
 
-    if lang_freq == 0:
-        return 7.0  # Extremely crosswordese (rare in language)
-    ratio = crossword_freq / lang_freq
+    # counts with +1 smoothing to allow log(0) avoidance
+    counts = list(freq_db.values())
+    min_c = min(counts)
+    max_c = max(counts)
 
-    # Log scale: positive = overrepresented
-    score = np.log10(ratio + 1e-12) + 6  # shift upward to avoid negatives
-    return round(score, 3)
+    # add 1 to everything to avoid log(0)
+    def log_x(x):
+        if base == math.e:
+            return math.log(x + 1)
+        return math.log(x + 1, base)
+
+    l_min = log_x(min_c)
+    l_max = log_x(max_c)
+    if l_max == l_min:
+        # all counts equal -> choose fallback (here we treat all known words as non-novel)
+        return float(round(0.0, round_digits))
+
+    l_word = log_x(freq_db[word])
+    normalized = (l_word - l_min) / (l_max - l_min)
+    novelty = 1.0 - normalized
+    return float(round(novelty, round_digits))
+
+def compute_crosswordese(stretch, novelty, round_digits=3):
+    normalized_stretch = min(stretch / 7, 1)
+    return round((normalized_stretch * (1 - novelty)), round_digits)
 
 
 # -------------------------------
@@ -124,8 +142,8 @@ def analyze_crossword(grid):
 
     for (r, c), direction, word in all_words:
         stretch = rarity_func(word)
-        novelty = compute_novelty(word, freq_db)
-        crosswordese = compute_crosswordese(word, freq_db)
+        novelty = compute_novelty_log(word, freq_db)
+        crosswordese = compute_crosswordese(stretch, novelty)
 
         word_data.append({
             "word": word.upper(),
